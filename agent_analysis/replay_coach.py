@@ -15,69 +15,37 @@ rl_coach = Agent(
 
         # Input format
 
-        You will receive a JSON object with two top-level keys: "summary_statistics" and "key_frames".
+        You will receive plain text broken into labelled sections. Read each section in order.
 
-        ## summary_statistics
+        GAME — player name, team color, result (win/loss/draw and score), game duration, playlist name.
 
-        A flat object with these fields:
+        SCORELINE — goals, assists, saves, shots, and game score for the analyzed player.
+        Goals conceded is how many goals the player's entire team gave up.
 
-        Identity / scoreline:
-          player_name, is_orange (true = orange team), outcome ("win"/"loss"/"draw"),
-          team_score, opponent_score, goals, assists, saves, shots, score (total game score),
-          goals_conceded (goals scored against the player's team)
+        POSITIONING — seconds the player spent in each zone during live play.
+        Defensive/neutral/offensive third refers to field thirds relative to the player's own goal.
+        "Behind ball" means the player was between their own goal and the ball (good defensive positioning).
+        "In front of ball" means the player was between the ball and the opponent's goal (pressing/attacking).
 
-        Game context:
-          duration_s (game length in seconds), playlist (numeric playlist ID)
+        MOVEMENT — average speed and time at different speed tiers, all in Unreal Units per second (UU/s).
+        Typical Rocket League speeds: slow < 700, normal 700–1400, boost speed 1400–2300, supersonic > 2300.
 
-        Boost management — ALL boost fields will be null when boost_data_available is false.
-        Ignore every boost field when boost_data_available is false. When available:
-          avg_boost_pct (0–100), time_no_boost_s, time_low_boost_s, time_full_boost_s,
-          boost_tanks_consumed (total boost used ÷ 255, i.e. full-tank equivalents),
-          boost_wasted_usage_pct, boost_wasted_collect_pct,
-          num_large_boosts, num_small_boosts, num_stolen_boosts,
-          avg_kickoff_boost_used
+        KICKOFFS — how many kickoffs the player took, how many they got first touch, how many they went to.
 
-        Positioning (all in seconds of game time spent there):
-          time_defensive_third_s, time_neutral_third_s, time_offensive_third_s,
-          time_defensive_half_s, time_offensive_half_s,
-          time_behind_ball_s, time_in_front_ball_s,
-          time_on_ground_s, time_low_air_s, time_high_air_s, time_on_wall_s
+        POSSESSION — total possessions, average length, average hits per possession, carries and flicks.
 
-        Speed:
-          avg_speed_uu (average speed in Unreal Units/second),
-          time_supersonic_s, time_slow_speed_s, time_boost_speed_s
+        BOOST — average boost level and time spent at various boost states. If this section says
+        "not recorded in this replay", boost data is unavailable — do not make any boost-related inferences.
 
-        Hits / possession:
-          avg_hit_distance_uu, total_kickoffs, kickoffs_first_touch, kickoffs_go_to_ball,
-          avg_possession_duration_s, avg_hits_per_possession, total_possessions,
-          total_carries, avg_carry_duration_s, total_flicks
+        DETECTED EVENTS — the most important section. Each line is an event type, its total count for the
+        whole game, and a one-line description of what it means. These counts are definitive.
 
-        Event counts (total occurrences detected across the whole game):
-          n_double_commits   — player and a teammate both challenged the same ball simultaneously
-          n_overextensions   — player in attacking third with near-zero boost while ball clears (boost-dependent)
-          n_low_boost_defense — player in defensive third with low boost (boost-dependent)
-          n_boost_starvation — player below 10% boost for 3+ consecutive seconds (boost-dependent)
-          n_overpursuit      — player sprinting toward the ball while it was already clearing hard the other way
-          n_rotation_gaps    — player and teammate both in attacking third while ball was in their defensive half
-          n_missed_aerials   — player was airborne near the ball but made no contact
-          total_events_flagged — sum of all the above
-
-        ## key_frames
-
-        A list of event objects, sorted by time_remaining (descending = early in game first). Each object:
-          time_remaining   — seconds left on the clock when the event occurred (e.g. "285s")
-          event_type       — one of: overpursuit, missed_aerial, double_commit, rotation_gap,
-                             low_boost_defense, overextension, boost_starvation
-          player_pos       — [x, y, z] in Unreal Units. Y axis runs length of field (negative = blue goal end,
-                             positive = orange goal end). Z is height.
-          ball_pos         — [x, y, z] same coordinate system
-          speed_uu         — player speed at that moment in UU/s
-          description      — human-readable summary of exactly what was detected at this frame
-          boost_pct        — (only present when boost_data_available) player's boost at event time (0–100)
-          nearest_pad      — (only present when boost_data_available) distance in UU to nearest large boost pad
-
-        Key frames are a capped sample (up to 6 per event type) — the n_* counts in summary_statistics
-        reflect the true total occurrences; key frames are just representative examples.
+        KEY EVENTS — a sample of up to 6 individual instances per event type, shown as:
+          [Xs left]  event_type
+            description of what happened
+            Player (x, y, z)  Ball (x, y, z)  Speed N UU/s
+        Coordinates use the field Y axis: negative Y = blue goal end, positive Y = orange goal end, Z = height.
+        These are examples only — use the DETECTED EVENTS counts for the true frequency of each habit.
 
         # How to reason
 

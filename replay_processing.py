@@ -8,7 +8,6 @@ Parses a Rocket League replay with carball (sprocket-rl-parser) and produces:
 """
 
 import warnings
-import json
 from typing import Dict, List, Optional, Tuple
 
 import carball
@@ -52,6 +51,12 @@ DEBOUNCE: Dict[str, float] = {
     "overpursuit":       4.0,
     "rotation_gap":      5.0,
     "missed_aerial":     3.0,
+}
+
+_PLAYLIST_NAMES: Dict[int, str] = {
+    1: "Casual Duel", 2: "Casual Doubles", 3: "Casual Standard", 4: "Casual Chaos",
+    10: "Ranked Duel", 11: "Ranked Doubles", 12: "Ranked Standard",
+    13: "Ranked Hoops", 27: "Ranked Dropshot", 28: "Ranked Rumble",
 }
 
 CHALLENGE_DIST = 500.0   # UU — both players within this range of ball = challenge
@@ -584,23 +589,12 @@ def build_coaching_input(
     max_per_type: int = 6,
 ) -> str:
     """
-    Combine aggregate stats and key event frames into a single JSON string
-    matching the rl_coach agent's expected input format.
+    Format aggregate stats and key events as readable plain text for the AI coach.
     """
     stats = dict(summary_stats)
+    boost_available = bool(stats.get("boost_data_available", True))
 
-    # When boost frame data isn't tracked, zero-valued boost stats mislead the model into
-    # giving the same boost-related advice every game regardless of actual play.
-    _BOOST_STAT_KEYS = {
-        "avg_boost_pct", "time_no_boost_s", "time_low_boost_s", "time_full_boost_s",
-        "boost_tanks_consumed", "boost_wasted_usage_pct", "boost_wasted_collect_pct",
-        "num_large_boosts", "num_small_boosts", "num_stolen_boosts",
-    }
-    if not stats.get("boost_data_available", True):
-        for k in _BOOST_STAT_KEYS:
-            if k in stats:
-                stats[k] = None
-
+    # ── Event counts ──────────────────────────────────────────────────────────
     if not events_df.empty:
         counts = events_df.groupby("event_type").size().to_dict()
         stats["n_double_commits"]     = counts.get("double_commit", 0)
@@ -612,11 +606,7 @@ def build_coaching_input(
         stats["n_missed_aerials"]     = counts.get("missed_aerial", 0)
         stats["total_events_flagged"] = len(events_df)
 
-        # Boost tracking: if any frame has a non-zero boost value it's available
-        boost_available = bool((events_df["player_boost_pct"].dropna() > 0).any())
-
-        # High-signal types: keep all instances; low-signal: cap at max_per_type,
-        # sampled evenly across the game timeline so coverage spans the whole match.
+        # Cap low-signal types at max_per_type, sampled evenly across the timeline
         HIGH_SIGNAL = {"double_commit", "overextension", "rotation_gap", "low_boost_defense"}
         parts = []
         for etype, group in events_df.groupby("event_type"):
@@ -625,39 +615,146 @@ def build_coaching_input(
             else:
                 idx = np.linspace(0, len(group) - 1, max_per_type, dtype=int)
                 parts.append(group.iloc[idx])
-        events_df = pd.concat(parts).sort_values("timestamp") if parts else events_df.iloc[:0]
+        sampled = pd.concat(parts).sort_values("timestamp") if parts else events_df.iloc[:0]
     else:
-        boost_available = False
+        sampled = events_df
 
-    key_frames = []
-    for _, row in events_df.iterrows():
-        frame: Dict = {
-            "time_remaining": f"{row.get('seconds_remaining', 0):.0f}s",
-            "event_type":     row.get("event_type", "unknown"),
-            "player_pos":     [round(row.get("player_pos_x", 0), 1),
-                               round(row.get("player_pos_y", 0), 1),
-                               round(row.get("player_pos_z", 0), 1)],
-            "ball_pos":       [round(row.get("ball_pos_x", 0), 1),
-                               round(row.get("ball_pos_y", 0), 1),
-                               round(row.get("ball_pos_z", 0), 1)],
-            "speed_uu":       int(round(row.get("player_speed", 0), 0)),
-            "description":    row.get("description", ""),
-        }
-        if boost_available:
-            frame["boost_pct"]   = round(row.get("player_boost_pct", 0), 1)
-            frame["nearest_pad"] = int(round(row.get("nearest_big_pad_dist", 0), 0))
-        key_frames.append(frame)
+    def _f(v, decimals=0):
+        """Format a numeric value, returning '?' for NaN/None."""
+        if v is None:
+            return "?"
+        try:
+            if v != v:  # NaN
+                return "?"
+            return f"{v:.{decimals}f}"
+        except (TypeError, ValueError):
+            return str(v)
 
-    def _clean(obj):
-        if isinstance(obj, float):
-            return None if (obj != obj) else round(obj, 1)
-        if isinstance(obj, dict):
-            return {k: _clean(v) for k, v in obj.items()}
-        if isinstance(obj, list):
-            return [_clean(v) for v in obj]
-        return obj
+    L: List[str] = []
 
-    return json.dumps(_clean({"summary_statistics": stats, "key_frames": key_frames}), indent=2)
+    # ── Header ────────────────────────────────────────────────────────────────
+    team       = "orange" if stats.get("is_orange") else "blue"
+    outcome    = stats.get("outcome", "unknown").upper()
+    dur        = stats.get("duration_s", 0) or 0
+    playlist   = _PLAYLIST_NAMES.get(stats.get("playlist", 0), f"Playlist {stats.get('playlist', '?')}")
+    L.append("=== ROCKET LEAGUE REPLAY ===")
+    L.append(f"Player : {stats.get('player_name', 'Unknown')} ({team} team)")
+    L.append(f"Result : {outcome}  {stats.get('team_score', 0)}-{stats.get('opponent_score', 0)}")
+    L.append(f"Game   : {int(dur // 60)}:{int(dur % 60):02d}  |  {playlist}")
+    L.append("")
+
+    # ── Scoreline ─────────────────────────────────────────────────────────────
+    L.append("SCORELINE")
+    L.append(f"  Goals: {stats.get('goals',0)}  Assists: {stats.get('assists',0)}  "
+             f"Saves: {stats.get('saves',0)}  Shots: {stats.get('shots',0)}  "
+             f"Game score: {stats.get('score',0)}")
+    L.append(f"  Goals conceded by team: {stats.get('goals_conceded',0)}")
+    L.append("")
+
+    # ── Positioning ───────────────────────────────────────────────────────────
+    L.append("POSITIONING  (seconds of game time spent in each zone)")
+    L.append(f"  Defensive third: {_f(stats.get('time_defensive_third_s'))}s  "
+             f"Neutral third: {_f(stats.get('time_neutral_third_s'))}s  "
+             f"Offensive third: {_f(stats.get('time_offensive_third_s'))}s")
+    L.append(f"  Behind ball: {_f(stats.get('time_behind_ball_s'))}s  "
+             f"In front of ball: {_f(stats.get('time_in_front_ball_s'))}s")
+    L.append(f"  Ground: {_f(stats.get('time_on_ground_s'))}s  "
+             f"Low air: {_f(stats.get('time_low_air_s'))}s  "
+             f"High air: {_f(stats.get('time_high_air_s'))}s  "
+             f"Wall: {_f(stats.get('time_on_wall_s'))}s")
+    L.append("")
+
+    # ── Movement ──────────────────────────────────────────────────────────────
+    L.append("MOVEMENT")
+    L.append(f"  Avg speed: {_f(stats.get('avg_speed_uu'))} UU/s  "
+             f"Supersonic: {_f(stats.get('time_supersonic_s'))}s  "
+             f"Boost speed: {_f(stats.get('time_boost_speed_s'))}s  "
+             f"Slow: {_f(stats.get('time_slow_speed_s'))}s")
+    L.append(f"  Avg hit distance: {_f(stats.get('avg_hit_distance_uu'))} UU")
+    L.append("")
+
+    # ── Kickoffs ──────────────────────────────────────────────────────────────
+    L.append(f"KICKOFFS  ({stats.get('total_kickoffs', 0)} total)")
+    L.append(f"  First touches: {stats.get('kickoffs_first_touch', 0)}  "
+             f"Went to ball: {stats.get('kickoffs_go_to_ball', 0)}")
+    L.append("")
+
+    # ── Possession ────────────────────────────────────────────────────────────
+    L.append("POSSESSION")
+    L.append(f"  {stats.get('total_possessions', 0)} possessions  "
+             f"Avg duration: {_f(stats.get('avg_possession_duration_s'), 1)}s  "
+             f"Avg hits/possession: {_f(stats.get('avg_hits_per_possession'), 1)}")
+    L.append(f"  Carries: {stats.get('total_carries', 0)}  "
+             f"Avg carry: {_f(stats.get('avg_carry_duration_s'), 1)}s  "
+             f"Flicks: {stats.get('total_flicks', 0)}")
+    L.append("")
+
+    # ── Boost ─────────────────────────────────────────────────────────────────
+    if boost_available:
+        L.append("BOOST")
+        L.append(f"  Avg: {_f(stats.get('avg_boost_pct'))}%  "
+                 f"Time empty: {_f(stats.get('time_no_boost_s'))}s  "
+                 f"Time low: {_f(stats.get('time_low_boost_s'))}s  "
+                 f"Time full: {_f(stats.get('time_full_boost_s'))}s")
+        L.append(f"  Tanks consumed: {_f(stats.get('boost_tanks_consumed'), 1)}  "
+                 f"Large pads: {stats.get('num_large_boosts', 0)}  "
+                 f"Small pads: {stats.get('num_small_boosts', 0)}  "
+                 f"Stolen: {stats.get('num_stolen_boosts', 0)}")
+        kbu = stats.get("avg_kickoff_boost_used")
+        if kbu is not None:
+            L.append(f"  Avg kickoff boost used: {_f(kbu)}")
+    else:
+        L.append("BOOST  (not recorded in this replay — do not make any boost-related inferences)")
+    L.append("")
+
+    # ── Event counts ──────────────────────────────────────────────────────────
+    L.append("DETECTED EVENTS  (total occurrences across the full game)")
+    L.append(f"  overpursuit     {stats.get('n_overpursuit', 0):>3}   "
+             "player charging while ball already cleared the other way")
+    L.append(f"  missed_aerial   {stats.get('n_missed_aerials', 0):>3}   "
+             "player airborne near ball but made no contact")
+    L.append(f"  double_commit   {stats.get('n_double_commits', 0):>3}   "
+             "player and teammate both challenging the same ball")
+    L.append(f"  rotation_gap    {stats.get('n_rotation_gaps', 0):>3}   "
+             "both player and teammate in attack while ball in own half")
+    if boost_available:
+        L.append(f"  low_boost_def   {stats.get('n_low_boost_defense', 0):>3}   "
+                 "in defensive third with <20% boost")
+        L.append(f"  overextension   {stats.get('n_overextensions', 0):>3}   "
+                 "in attacking third with near-zero boost while ball clears")
+        L.append(f"  boost_starved   {stats.get('n_boost_starvation', 0):>3}   "
+                 "below 10% boost for 3+ consecutive seconds")
+    L.append("")
+
+    # ── Key events ────────────────────────────────────────────────────────────
+    if not sampled.empty:
+        L.append(f"KEY EVENTS  (up to {max_per_type} examples per type — "
+                 "use counts above for true totals)")
+        L.append("  Coordinates in Unreal Units: Y axis runs length of field "
+                 "(negative = blue goal end, positive = orange goal end), Z = height")
+        L.append("")
+        for _, row in sampled.iterrows():
+            tr   = row.get("seconds_remaining", 0)
+            etype = row.get("event_type", "")
+            desc  = row.get("description", "")
+            px, py, pz = row.get("player_pos_x", 0), row.get("player_pos_y", 0), row.get("player_pos_z", 0)
+            bx, by, bz = row.get("ball_pos_x",   0), row.get("ball_pos_y",   0), row.get("ball_pos_z",   0)
+            spd = row.get("player_speed", 0)
+            L.append(f"  [{_f(tr)}s left]  {etype}")
+            L.append(f"    {desc}")
+            L.append(f"    Player ({_f(px)}, {_f(py)}, {_f(pz)})  "
+                     f"Ball ({_f(bx)}, {_f(by)}, {_f(bz)})  "
+                     f"Speed {_f(spd)} UU/s")
+            if boost_available:
+                bp  = row.get("player_boost_pct")
+                pad = row.get("nearest_big_pad_dist")
+                if bp is not None and bp == bp:
+                    L.append(f"    Boost {_f(bp)}%  Nearest large pad {_f(pad)} UU")
+            L.append("")
+    else:
+        L.append("KEY EVENTS  none detected")
+
+    return "\n".join(L)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
