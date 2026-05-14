@@ -185,7 +185,7 @@ def _save_to_db(
 
     db.add(CoachingReport(
         session_id=session_row.id,
-        game_summary=report.get("coaching_text") or report.get("game_summary", ""),
+        game_summary=report.get("game_summary", ""),
         coaching_points_json=json.dumps(report.get("coaching_points", [])),
     ))
 
@@ -193,9 +193,40 @@ def _save_to_db(
     return session_row
 
 
-def _extract_coaching_text(raw_text: str) -> str:
-    # Strip <think>...</think> reasoning traces from qwen3 models
-    return re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL).strip()
+def _parse_coaching_text(raw: str) -> dict:
+    """Parse the model's structured plain-text output into the standard report dict."""
+    text = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+    result: dict = {"game_summary": "", "coaching_points": []}
+
+    m = re.search(r"^SUMMARY:\s*(.+)$", text, re.MULTILINE)
+    if m:
+        result["game_summary"] = m.group(1).strip()
+
+    # Split on [N] headers, keeping each block together
+    blocks = re.split(r"(?=^\[\d+\])", text, flags=re.MULTILINE)
+    for block in blocks:
+        block = block.strip()
+        # [1] Label text — high — positioning  (em/en dash or hyphen all accepted)
+        header = re.match(
+            r"\[(\d+)\]\s+(.+?)\s+[—–-]+\s+(high|medium|low)\s+[—–-]+\s+([\w_]+)",
+            block, re.IGNORECASE,
+        )
+        if not header:
+            continue
+        obs = re.search(r"Observation:\s*(.*?)(?=\nWhy it matters:|\nFix:|$)", block, re.DOTALL | re.IGNORECASE)
+        why = re.search(r"Why it matters:\s*(.*?)(?=\nFix:|$)",                 block, re.DOTALL | re.IGNORECASE)
+        fix = re.search(r"Fix:\s*(.*?)$",                                        block, re.DOTALL | re.IGNORECASE)
+        result["coaching_points"].append({
+            "rank":           int(header.group(1)),
+            "label":          header.group(2).strip(),
+            "impact":         header.group(3).strip().lower(),
+            "category":       header.group(4).strip().lower(),
+            "observation":    obs.group(1).strip() if obs else "",
+            "why_it_matters": why.group(1).strip() if why else "",
+            "fix":            fix.group(1).strip() if fix else "",
+        })
+
+    return result
 
 
 def _print_report(report: dict) -> None:
@@ -230,9 +261,9 @@ def _load_cached_report(replay_hash: str) -> dict | None:
         if not report_row or not report_row.game_summary:
             return None
         coaching_points = json.loads(report_row.coaching_points_json)
-        if coaching_points:
-            return {"game_summary": report_row.game_summary, "coaching_points": coaching_points}
-        return {"coaching_text": report_row.game_summary, "coaching_points": []}
+        if not coaching_points:
+            return None
+        return {"game_summary": report_row.game_summary, "coaching_points": coaching_points}
 
 
 async def analyze(replay_path: str, player_name: str | None = None) -> dict:
@@ -276,13 +307,12 @@ async def analyze(replay_path: str, player_name: str | None = None) -> dict:
 
     print("\nQuerying AI coach...")
     response = await rl_coach.run(coaching_input)
-    coaching_text = _extract_coaching_text(response.text)
+    report = _parse_coaching_text(response.text)
 
-    if not coaching_text:
-        print("\nAI coach returned an empty response.")
-        raise ValueError("AI coach returned an empty report — try again.")
-
-    report = {"coaching_text": coaching_text, "coaching_points": []}
+    if not report["coaching_points"]:
+        print("\nCould not parse coaching output. Raw response:")
+        print(response.text)
+        raise ValueError("AI coach returned a malformed or empty report — try again.")
 
     engine = get_engine()
     create_tables(engine)

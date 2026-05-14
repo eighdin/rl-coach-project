@@ -271,17 +271,6 @@ header span { color: var(--accent); }
 
 .coaching-points { display: flex; flex-direction: column; gap: 0.875rem; }
 
-.coaching-text {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 1.5rem;
-  font-size: 0.9rem;
-  line-height: 1.75;
-  color: var(--text);
-  white-space: pre-wrap;
-}
-
 .coaching-point {
   background: var(--surface);
   border: 1px solid var(--border);

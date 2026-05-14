@@ -89,16 +89,6 @@ function renderReport(data, meta = null) {
   const container = document.getElementById('coaching-points');
   container.innerHTML = '';
 
-  if (data.coaching_text) {
-    document.getElementById('game-summary').textContent = '';
-    const el = document.createElement('div');
-    el.className = 'coaching-text';
-    el.textContent = data.coaching_text;
-    container.appendChild(el);
-    report.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    return;
-  }
-
   document.getElementById('game-summary').textContent = data.game_summary || '';
 
   (data.coaching_points || []).forEach(pt => {

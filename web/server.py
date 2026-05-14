@@ -49,10 +49,8 @@ async def analyze_replay(file: UploadFile, player_name: str = Form("")):
     finally:
         os.unlink(tmp_path)
 
-    has_text = bool(report.get("coaching_text"))
-    has_structured = isinstance(report.get("coaching_points"), list) and bool(report["coaching_points"])
-    if not report or not (has_text or has_structured):
-        raise HTTPException(status_code=500, detail="AI coach returned an empty report — try again.")
+    if not report or not report.get("coaching_points"):
+        raise HTTPException(status_code=500, detail="AI coach returned a malformed or empty report — try again.")
 
     return JSONResponse(report)
 
