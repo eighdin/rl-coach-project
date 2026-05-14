@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RL Coach</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+
+<header>
+  <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#4f8ef7" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="12" cy="12" r="10"/><path d="M12 8v4l3 3"/>
+  </svg>
+  <h1>RL <span>Coach</span></h1>
+</header>
+
+<div class="layout">
+
+  <!-- Sidebar: history -->
+  <aside class="sidebar">
+    <div class="sidebar-header">Past Analyses</div>
+    <div class="history-list" id="history-list">
+      <p class="empty-history">No replays analyzed yet.</p>
+    </div>
+  </aside>
+
+  <!-- Main -->
+  <main class="main">
+
+    <!-- Upload card -->
+    <div class="upload-card">
+      <h2>Analyze a Replay</h2>
+
+      <div class="drop-zone" id="drop-zone">
+        <input type="file" id="file-input" accept=".replay" />
+        <div class="icon">🎮</div>
+        <p><strong>Drop your .replay file here</strong></p>
+        <p>or click to browse</p>
+      </div>
+      <div class="file-name" id="file-name"></div>
+
+      <div class="upload-controls">
+        <input
+          type="text"
+          id="player-name"
+          placeholder="Player name (optional — defaults to first blue player)"
+        />
+        <button class="btn btn-primary" id="analyze-btn" disabled>Analyze</button>
+      </div>
+    </div>
+
+    <!-- Status / spinner -->
+    <div class="status" id="status">
+      <div class="spinner"></div>
+      <span id="status-msg"></span>
+    </div>
+
+    <!-- Coaching report -->
+    <div class="report" id="report">
+      <div class="report-header">
+        <div class="game-summary" id="game-summary"></div>
+        <div class="report-meta" id="report-meta"></div>
+      </div>
+      <div class="coaching-points" id="coaching-points"></div>
+    </div>
+
+  </main>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
