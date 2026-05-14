@@ -185,7 +185,7 @@ def _save_to_db(
 
     db.add(CoachingReport(
         session_id=session_row.id,
-        game_summary=report.get("game_summary", ""),
+        game_summary=report.get("coaching_text") or report.get("game_summary", ""),
         coaching_points_json=json.dumps(report.get("coaching_points", [])),
     ))
 
@@ -193,27 +193,26 @@ def _save_to_db(
     return session_row
 
 
-def _parse_coaching_json(raw_text: str) -> dict:
-    # Strip <think>...</think> blocks (qwen3 reasoning traces)
-    cleaned = re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL).strip()
-    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
-    if not match:
-        return {}
-    return json.loads(match.group())
+def _extract_coaching_text(raw_text: str) -> str:
+    # Strip <think>...</think> reasoning traces from qwen3 models
+    return re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL).strip()
 
 
 def _print_report(report: dict) -> None:
     print("\n" + "═" * 60)
-    print(f"GAME SUMMARY: {report.get('game_summary', '')}")
-    print("═" * 60)
-    for pt in report.get("coaching_points", []):
-        print(
-            f"\n[{pt['rank']}] {pt['label']}"
-            f"  ({pt['impact']} impact / {pt['category']})"
-        )
-        print(f"  Observation:    {pt['observation']}")
-        print(f"  Why it matters: {pt['why_it_matters']}")
-        print(f"  Fix:            {pt['fix']}")
+    if report.get("coaching_text"):
+        print(report["coaching_text"])
+    else:
+        print(f"GAME SUMMARY: {report.get('game_summary', '')}")
+        print("═" * 60)
+        for pt in report.get("coaching_points", []):
+            print(
+                f"\n[{pt['rank']}] {pt['label']}"
+                f"  ({pt['impact']} impact / {pt['category']})"
+            )
+            print(f"  Observation:    {pt['observation']}")
+            print(f"  Why it matters: {pt['why_it_matters']}")
+            print(f"  Fix:            {pt['fix']}")
 
 
 def _load_cached_report(replay_hash: str) -> dict | None:
@@ -231,12 +230,9 @@ def _load_cached_report(replay_hash: str) -> dict | None:
         if not report_row or not report_row.game_summary:
             return None
         coaching_points = json.loads(report_row.coaching_points_json)
-        if not coaching_points:
-            return None
-        return {
-            "game_summary": report_row.game_summary,
-            "coaching_points": coaching_points,
-        }
+        if coaching_points:
+            return {"game_summary": report_row.game_summary, "coaching_points": coaching_points}
+        return {"coaching_text": report_row.game_summary, "coaching_points": []}
 
 
 async def analyze(replay_path: str, player_name: str | None = None) -> dict:
@@ -280,7 +276,13 @@ async def analyze(replay_path: str, player_name: str | None = None) -> dict:
 
     print("\nQuerying AI coach...")
     response = await rl_coach.run(coaching_input)
-    report = _parse_coaching_json(response.text)
+    coaching_text = _extract_coaching_text(response.text)
+
+    if not coaching_text:
+        print("\nAI coach returned an empty response.")
+        raise ValueError("AI coach returned an empty report — try again.")
+
+    report = {"coaching_text": coaching_text, "coaching_points": []}
 
     engine = get_engine()
     create_tables(engine)
@@ -290,11 +292,7 @@ async def analyze(replay_path: str, player_name: str | None = None) -> dict:
         )
         print(f"Saved to database (session id={game_session.id})")
 
-    if report:
-        _print_report(report)
-    else:
-        print("\nCould not parse structured coaching output. Raw response:")
-        print(response.text)
+    _print_report(report)
 
     return report
 

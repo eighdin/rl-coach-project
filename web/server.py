@@ -10,7 +10,7 @@ import os
 import sys
 import tempfile
 
-from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi import FastAPI, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from sqlmodel import Session, select
@@ -18,7 +18,7 @@ from sqlmodel import Session, select
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from analyze import analyze, _load_cached_report
-from database import CoachingReport, GameSession, PlayerMode, Player, GameStats, create_tables, get_engine
+from database import CoachingEvent, CoachingReport, GameSession, PlayerMode, Player, GameStats, create_tables, get_engine
 
 app = FastAPI(title="RL Coach")
 
@@ -32,7 +32,7 @@ async def root():
 
 
 @app.post("/api/analyze")
-async def analyze_replay(file: UploadFile, player_name: str = ""):
+async def analyze_replay(file: UploadFile, player_name: str = Form("")):
     if not file.filename or not file.filename.endswith(".replay"):
         raise HTTPException(status_code=400, detail="File must be a .replay file.")
 
@@ -49,8 +49,10 @@ async def analyze_replay(file: UploadFile, player_name: str = ""):
     finally:
         os.unlink(tmp_path)
 
-    if not report:
-        raise HTTPException(status_code=500, detail="AI coach returned an empty report.")
+    has_text = bool(report.get("coaching_text"))
+    has_structured = isinstance(report.get("coaching_points"), list) and bool(report["coaching_points"])
+    if not report or not (has_text or has_structured):
+        raise HTTPException(status_code=500, detail="AI coach returned an empty report — try again.")
 
     return JSONResponse(report)
 
@@ -61,6 +63,23 @@ async def get_report(replay_hash: str):
     if not report:
         raise HTTPException(status_code=404, detail="No cached report for this replay.")
     return JSONResponse(report)
+
+
+@app.delete("/api/session/{replay_hash}")
+async def delete_session(replay_hash: str):
+    engine = get_engine()
+    create_tables(engine)
+    with Session(engine) as db:
+        session_row = db.exec(select(GameSession).where(GameSession.replay_hash == replay_hash)).first()
+        if not session_row:
+            raise HTTPException(status_code=404, detail="Session not found.")
+        sid = session_row.id
+        for Model in [GameStats, CoachingEvent, CoachingReport]:
+            for row in db.exec(select(Model).where(Model.session_id == sid)).all():
+                db.delete(row)
+        db.delete(session_row)
+        db.commit()
+    return JSONResponse({"ok": True})
 
 
 @app.get("/api/history")

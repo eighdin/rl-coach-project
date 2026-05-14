@@ -78,8 +78,6 @@ analyzeBtn.addEventListener('click', async () => {
 function renderReport(data, meta = null) {
   report.classList.add('visible');
 
-  document.getElementById('game-summary').textContent = data.game_summary;
-
   const metaEl = document.getElementById('report-meta');
   metaEl.innerHTML = meta ? `
     <span><strong>${meta.player_name}</strong></span>
@@ -91,7 +89,19 @@ function renderReport(data, meta = null) {
   const container = document.getElementById('coaching-points');
   container.innerHTML = '';
 
-  data.coaching_points.forEach(pt => {
+  if (data.coaching_text) {
+    document.getElementById('game-summary').textContent = '';
+    const el = document.createElement('div');
+    el.className = 'coaching-text';
+    el.textContent = data.coaching_text;
+    container.appendChild(el);
+    report.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    return;
+  }
+
+  document.getElementById('game-summary').textContent = data.game_summary || '';
+
+  (data.coaching_points || []).forEach(pt => {
     const el = document.createElement('div');
     el.className = `coaching-point ${pt.impact}`;
     el.innerHTML = `
@@ -148,6 +158,19 @@ async function loadHistory() {
         </div>
       `;
       el.addEventListener('click', () => loadCachedReport(item.replay_hash, item, el));
+
+      const delBtn = document.createElement('button');
+      delBtn.className = 'delete-btn';
+      delBtn.title = 'Delete record';
+      delBtn.innerHTML = '&times;';
+      delBtn.addEventListener('click', async e => {
+        e.stopPropagation();
+        const wasActive = el.classList.contains('active');
+        await fetch(`/api/session/${item.replay_hash}`, { method: 'DELETE' });
+        if (wasActive) report.classList.remove('visible');
+        loadHistory();
+      });
+      el.appendChild(delBtn);
       historyList.appendChild(el);
     });
   } catch (e) {

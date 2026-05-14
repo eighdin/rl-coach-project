@@ -70,6 +70,7 @@ header span { color: var(--accent); }
 }
 
 .history-item {
+  position: relative;
   padding: 0.75rem 0.875rem;
   border-radius: 8px;
   cursor: pointer;
@@ -83,6 +84,25 @@ header span { color: var(--accent); }
 
 .history-item .player { font-weight: 600; font-size: 0.9rem; }
 .history-item .meta   { font-size: 0.75rem; color: var(--muted); margin-top: 2px; display: flex; gap: 0.5rem; align-items: center; }
+
+.delete-btn {
+  position: absolute;
+  top: 50%;
+  right: 0.5rem;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  padding: 2px 5px;
+  border-radius: 4px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s;
+}
+.history-item:hover .delete-btn { opacity: 1; }
+.delete-btn:hover { color: var(--high); }
 
 .badge {
   display: inline-block;
@@ -250,6 +270,17 @@ header span { color: var(--accent); }
 .report-meta span strong { color: var(--text); }
 
 .coaching-points { display: flex; flex-direction: column; gap: 0.875rem; }
+
+.coaching-text {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.5rem;
+  font-size: 0.9rem;
+  line-height: 1.75;
+  color: var(--text);
+  white-space: pre-wrap;
+}
 
 .coaching-point {
   background: var(--surface);
